@@ -24,7 +24,7 @@ This flake lets you use it immediately in any NixOS configuration with flakes en
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
     openlinkhub-flake = {
-      url = "github:<user>/nix-openlinkhub";
+      url = "github:skelettor/nix-openlinkhub";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
