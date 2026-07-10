@@ -10,13 +10,26 @@
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system}.extend self.overlays.default;
-      src = ./.;
+      lib = nixpkgs.lib;
+
+      # Filtre les fichiers non-Nix (.direnv, result, .git, etc.) pour éviter
+      # des invalidations de cache inutiles dans les checks.
+      nixSrc = lib.cleanSourceWith {
+        src = ./.;
+        filter =
+          path: _type:
+          let
+            baseName = baseNameOf (toString path);
+          in
+          !(lib.hasPrefix "." baseName) && baseName != "result";
+      };
     in
     {
 
+      # Passthrough intentionnel : les utilisateurs peuvent override openlinkhub ici
+      # sans avoir à forker ce flake (ex: overrideAttrs pour patcher la source).
       overlays.default = _final: prev: {
         # openlinkhub = prev.openlinkhub.overrideAttrs (old: { ... });
-
         inherit (prev) openlinkhub;
       };
 
@@ -34,10 +47,13 @@
       # nix flake check
       checks.${system} = {
         statix = pkgs.runCommand "check-statix" { buildInputs = [ pkgs.statix ]; } ''
-          statix check ${src} && touch $out
+          statix check ${nixSrc} && touch $out
         '';
         deadnix = pkgs.runCommand "check-deadnix" { buildInputs = [ pkgs.deadnix ]; } ''
-          deadnix --fail ${src} && touch $out
+          deadnix --fail ${nixSrc} && touch $out
+        '';
+        nixfmt = pkgs.runCommand "check-nixfmt" { buildInputs = [ pkgs.nixfmt-tree ]; } ''
+          nixfmt --check ${nixSrc}/*.nix && touch $out
         '';
 
         module-eval =

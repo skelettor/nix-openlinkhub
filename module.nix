@@ -61,8 +61,13 @@ in
     systemd.services.openlinkhub = {
       description = "OpenLinkHub — Corsair iCUE LINK / AIO / Hub controller";
       wantedBy = [ "multi-user.target" ];
-      after = [ "network.target" ];
-      wants = [ "dev-usb.device" ];
+      # systemd-udev-settle attend la fin du traitement des événements udev avant
+      # que le daemon ne démarre. Restart=always absorbe les cas résiduels.
+      after = [
+        "network.target"
+        "systemd-udev-settle.service"
+      ];
+      wants = [ "systemd-udev-settle.service" ];
 
       preStart = ''
         ln -sfnT ${cfg.package}/opt/OpenLinkHub/web web

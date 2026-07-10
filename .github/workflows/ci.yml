@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * *' # tous les jours à 6h UTC : vérifie si openlinkhub a changé de version
+
+jobs:
+  # ---------- CHECK ----------
+  # Un seul job Nix : nix flake check exécute statix + deadnix + nixfmt + module-eval
+  # (économie de ~6 min/run par rapport à 3 jobs lint séparés sur GitHub Free)
+  check-flake:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+      - uses: cachix/cachix-action@v15
+        with:
+          name: nix-community
+      - name: Vérifie la santé de flake.lock
+        uses: DeterminateSystems/flake-checker-action@fd9359ac79d0e912f1b4b947a48470b3e2799b56 # v12
+      - name: flake check
+        run: nix flake check
+
+  # ---------- WATCH ----------
+  # Compare la version d'openlinkhub verrouillée (flake.lock) à celle présente
+  # sur la tête de nixos-unstable. Ne déclenche l'update que si ça a réellement changé,
+  # pour éviter des PR de bump nixpkgs sans rapport avec openlinkhub.
+  watch-openlinkhub:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.compare.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Révision nixpkgs verrouillée
+        id: locked
+        run: |
+          rev=$(jq -r '.nodes.nixpkgs.locked.rev' flake.lock)
+          echo "rev=$rev" >> "$GITHUB_OUTPUT"
+
+      - name: Version openlinkhub à la révision verrouillée
+        id: old
+        run: |
+          version=$(curl -sL "https://raw.githubusercontent.com/NixOS/nixpkgs/${{ steps.locked.outputs.rev }}/pkgs/by-name/op/openlinkhub/package.nix" \
+            | grep -oP 'version\s*=\s*"\K[^"]+')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Version openlinkhub sur nixos-unstable HEAD
+        id: new
+        run: |
+          version=$(curl -sL "https://raw.githubusercontent.com/NixOS/nixpkgs/nixos-unstable/pkgs/by-name/op/openlinkhub/package.nix" \
+            | grep -oP 'version\s*=\s*"\K[^"]+')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Compare
+        id: compare
+        run: |
+          echo "openlinkhub verrouillé : ${{ steps.old.outputs.version }}"
+          echo "openlinkhub unstable   : ${{ steps.new.outputs.version }}"
+          if [ "${{ steps.old.outputs.version }}" != "${{ steps.new.outputs.version }}" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ---------- UPDATE (manuel, ou automatique si openlinkhub a changé) ----------
+  # Prérequis : secret CI_BOT_TOKEN dans Settings > Secrets and variables > Actions
+  # (Personal Access Token classique ou fine-grained, scope repo / contents+pull-requests, sur ce dépôt)
+  # Sans ce secret, on peut aussi utiliser ${{ secrets.GITHUB_TOKEN }}, mais les PR créées avec le
+  # token par défaut ne déclenchent pas d'autres workflows (limitation GitHub).
+  update-flake-lock:
+    needs: watch-openlinkhub
+    if: |
+      (needs.watch-openlinkhub.result == 'success' || needs.watch-openlinkhub.result == 'skipped') &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'schedule' && needs.watch-openlinkhub.outputs.changed == 'true'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.CI_BOT_TOKEN }}
+
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - name: Update flake.lock
+        uses: DeterminateSystems/update-flake-lock@a0f068d37b542f3150564fbf1164fec2d958ee11 # v28
+        with:
+          token: ${{ secrets.CI_BOT_TOKEN }}
+          pr-title: "chore: nix flake update"
+          pr-labels: |
+            dependencies
+            automated
+          branch: flake-lock-update
