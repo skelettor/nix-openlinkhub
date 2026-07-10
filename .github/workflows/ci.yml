@@ -28,7 +28,7 @@ jobs:
         with:
           name: nix-community
       - name: Check flake.lock health
-        uses: DeterminateSystems/flake-checker-action@fd9359ac79d0e912f1b4b947a48470b3e2799b56 # v12
+        uses: DeterminateSystems/flake-checker-action@v12
       - name: flake check
         run: nix flake check
 
@@ -104,7 +104,7 @@ jobs:
             accept-flake-config = true
 
       - name: Update flake.lock
-        uses: DeterminateSystems/update-flake-lock@a0f068d37b542f3150564fbf1164fec2d958ee11 # v28
+        uses: DeterminateSystems/update-flake-lock@v28
         with:
           token: ${{ secrets.CI_BOT_TOKEN }}
           pr-title: "chore: nix flake update"
