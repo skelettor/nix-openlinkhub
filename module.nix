@@ -7,6 +7,9 @@
 let
   cfg = config.services.hardware.openlinkhub;
 
+  # Upstream sets OWNER="openlinkhub" in the udev rule, which requires the daemon
+  # to run as root to take ownership of device nodes. We replace it with
+  # GROUP="openlinkhub" so the daemon can run as an unprivileged system user.
   udevRulesPkg = pkgs.runCommand "openlinkhub-udev-rules" { } ''
     install -Dm 644 \
       ${cfg.package}/etc/udev/rules.d/99-openlinkhub.rules \
@@ -61,8 +64,8 @@ in
     systemd.services.openlinkhub = {
       description = "OpenLinkHub — Corsair iCUE LINK / AIO / Hub controller";
       wantedBy = [ "multi-user.target" ];
-      # systemd-udev-settle attend la fin du traitement des événements udev avant
-      # que le daemon ne démarre. Restart=always absorbe les cas résiduels.
+      # systemd-udev-settle ensures udev has finished processing events before the
+      # daemon starts. Restart=always handles the residual race on first boot.
       after = [
         "network.target"
         "systemd-udev-settle.service"
@@ -70,9 +73,13 @@ in
       wants = [ "systemd-udev-settle.service" ];
 
       preStart = ''
+        # web/ and static/ live in the read-only store; symlink them into the
+        # writable StateDirectory so the daemon can serve them at runtime.
         ln -sfnT ${cfg.package}/opt/OpenLinkHub/web web
         ln -sfnT ${cfg.package}/opt/OpenLinkHub/static static
         mkdir -p database
+        # Seed the database on first start. -n (no-clobber) preserves user data
+        # (device profiles, settings) on subsequent restarts and rebuilds.
         cp -rn --no-preserve=mode,ownership \
           ${cfg.package}/opt/OpenLinkHub/database/. database/
         chmod -R u+w database

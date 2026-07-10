@@ -1,16 +1,20 @@
 name: CI
 
+# Three jobs, in dependency order:
+#   check-flake     — runs on every push and PR; lints and evaluates the module.
+#   watch-openlinkhub — runs on schedule/manual; detects upstream version bumps.
+#   update-flake-lock — runs manually, or automatically when a version bump is found.
+
 on:
   push:
   pull_request:
   workflow_dispatch:
   schedule:
-    - cron: '0 6 * * *' # tous les jours à 6h UTC : vérifie si openlinkhub a changé de version
+    - cron: '0 6 * * *' # daily at 06:00 UTC — check whether openlinkhub has a new release
 
 jobs:
   # ---------- CHECK ----------
-  # Un seul job Nix : nix flake check exécute statix + deadnix + nixfmt + module-eval
-  # (économie de ~6 min/run par rapport à 3 jobs lint séparés sur GitHub Free)
+  # A single `nix flake check` covers statix + deadnix + nixfmt + module-eval.
   check-flake:
     runs-on: ubuntu-latest
     steps:
@@ -23,15 +27,15 @@ jobs:
       - uses: cachix/cachix-action@v15
         with:
           name: nix-community
-      - name: Vérifie la santé de flake.lock
+      - name: Check flake.lock health
         uses: DeterminateSystems/flake-checker-action@fd9359ac79d0e912f1b4b947a48470b3e2799b56 # v12
       - name: flake check
         run: nix flake check
 
   # ---------- WATCH ----------
-  # Compare la version d'openlinkhub verrouillée (flake.lock) à celle présente
-  # sur la tête de nixos-unstable. Ne déclenche l'update que si ça a réellement changé,
-  # pour éviter des PR de bump nixpkgs sans rapport avec openlinkhub.
+  # Compares the openlinkhub version locked in flake.lock against the current
+  # nixos-unstable HEAD. The lock update is only triggered when the version
+  # actually changed, avoiding unrelated nixpkgs bumps in the PR history.
   watch-openlinkhub:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -40,42 +44,44 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Révision nixpkgs verrouillée
+      - name: Resolve locked nixpkgs revision
         id: locked
         run: |
           rev=$(jq -r '.nodes.nixpkgs.locked.rev' flake.lock)
           echo "rev=$rev" >> "$GITHUB_OUTPUT"
 
-      - name: Version openlinkhub à la révision verrouillée
+      - name: Fetch openlinkhub version at locked revision
         id: old
         run: |
           version=$(curl -sL "https://raw.githubusercontent.com/NixOS/nixpkgs/${{ steps.locked.outputs.rev }}/pkgs/by-name/op/openlinkhub/package.nix" \
             | grep -oP 'version\s*=\s*"\K[^"]+')
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Version openlinkhub sur nixos-unstable HEAD
+      - name: Fetch openlinkhub version at nixos-unstable HEAD
         id: new
         run: |
           version=$(curl -sL "https://raw.githubusercontent.com/NixOS/nixpkgs/nixos-unstable/pkgs/by-name/op/openlinkhub/package.nix" \
             | grep -oP 'version\s*=\s*"\K[^"]+')
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Compare
+      - name: Compare versions
         id: compare
         run: |
-          echo "openlinkhub verrouillé : ${{ steps.old.outputs.version }}"
-          echo "openlinkhub unstable   : ${{ steps.new.outputs.version }}"
+          echo "locked  : ${{ steps.old.outputs.version }}"
+          echo "unstable: ${{ steps.new.outputs.version }}"
           if [ "${{ steps.old.outputs.version }}" != "${{ steps.new.outputs.version }}" ]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # ---------- UPDATE (manuel, ou automatique si openlinkhub a changé) ----------
-  # Prérequis : secret CI_BOT_TOKEN dans Settings > Secrets and variables > Actions
-  # (Personal Access Token classique ou fine-grained, scope repo / contents+pull-requests, sur ce dépôt)
-  # Sans ce secret, on peut aussi utiliser ${{ secrets.GITHUB_TOKEN }}, mais les PR créées avec le
-  # token par défaut ne déclenchent pas d'autres workflows (limitation GitHub).
+  # ---------- UPDATE ----------
+  # Runs on manual dispatch, or automatically when watch-openlinkhub detects a bump.
+  #
+  # Requires the CI_BOT_TOKEN secret (Settings › Secrets › Actions): a classic or
+  # fine-grained PAT with `contents: write` and `pull-requests: write` on this repo.
+  # Using GITHUB_TOKEN instead would work, but PRs opened with it do not trigger
+  # other workflows — a GitHub limitation.
   update-flake-lock:
     needs: watch-openlinkhub
     if: |

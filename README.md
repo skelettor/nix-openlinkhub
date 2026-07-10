@@ -47,6 +47,8 @@ This flake lets you use it immediately in any NixOS configuration with flakes en
 }
 ```
 
+Commit the generated `flake.lock` to version-control so every machine uses the exact same pinned revision.
+
 ### 2. Enable the service
 
 ```nix
@@ -88,7 +90,7 @@ Use the overlay entry point to customise the package without forking the module:
 ## Runtime details
 
 - **Web UI:** `http://127.0.0.1:27003` by default. `listenAddress` and `listenPort` are editable in the UI; if you expose the UI on a non-loopback address, add the port to `networking.firewall.allowedTCPPorts` yourself.
-- **State directory:** `/var/lib/openlinkhub/` — runtime config (`config.json`) and device database are persisted here and survive rebuilds.
+- **State directory:** `/var/lib/openlinkhub/` — runtime config (`config.json`) and device database are persisted here and survive rebuilds. The `web/` and `static/` directories inside it are symlinks into the read-only Nix store; only the database and config are writable.
 - **System user/group:** the daemon runs as `openlinkhub:openlinkhub`. Add your user to the `openlinkhub` group for direct device access outside the daemon.
 
 ---
@@ -96,6 +98,7 @@ Use the overlay entry point to customise the package without forking the module:
 ## Known limitations
 
 - **udev rules are required.** The module installs udev rules automatically via `services.udev.packages`. The daemon will not detect devices without them. A `nixos-rebuild switch` (or reboot) is needed after first installation for udev to pick up the new rules.
+- **udev rule ownership patch.** The upstream rule sets `OWNER="openlinkhub"`, which requires root. This module rewrites it to `GROUP="openlinkhub"` so the daemon can run as an unprivileged system user. The net effect is the same: only members of the `openlinkhub` group have direct access to device nodes.
 - **`uinput` for SCUF gamepad emulation is optional.** The shipped udev rule normally autoloads the `uinput` kernel module. If it is not loaded on your system, add it explicitly:
   ```nix
   boot.kernelModules = [ "uinput" ];
@@ -104,3 +107,23 @@ Use the overlay entry point to customise the package without forking the module:
 
 ---
 
+## CI / Contributing
+
+CI runs `nix flake check` on every push and pull request (covers `statix`, `deadnix`, `nixfmt`, and module evaluation). A scheduled job watches for new upstream releases and opens a lock-update PR automatically.
+
+To run the same checks locally:
+
+```bash
+nix flake check
+```
+
+**Tip:** The CI pipeline uses the [nix-community](https://nix-community.cachix.org) Cachix binary cache. Adding it to your Nix config speeds up evaluation:
+
+```nix
+nix.settings = {
+  substituters = [ "https://nix-community.cachix.org" ];
+  trusted-public-keys = [ "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCUSDs=" ];
+};
+```
+
+Maintainers: the automated lock-update PR job requires a `CI_BOT_TOKEN` secret (a PAT with `contents: write` and `pull-requests: write` on this repository). Without it, the job falls back silently — you can still run it manually via `workflow_dispatch`.

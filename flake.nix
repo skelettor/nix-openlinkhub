@@ -10,10 +10,10 @@
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system}.extend self.overlays.default;
-      lib = nixpkgs.lib;
+      inherit (nixpkgs) lib;
 
-      # Filtre les fichiers non-Nix (.direnv, result, .git, etc.) pour éviter
-      # des invalidations de cache inutiles dans les checks.
+      # Strip dotfiles, .direnv, and result symlinks so that git index changes
+      # or stale build outputs do not invalidate the check derivations.
       nixSrc = lib.cleanSourceWith {
         src = ./.;
         filter =
@@ -26,10 +26,9 @@
     in
     {
 
-      # Passthrough intentionnel : les utilisateurs peuvent override openlinkhub ici
-      # sans avoir à forker ce flake (ex: overrideAttrs pour patcher la source).
+      # Intentional passthrough: consumers can override openlinkhub in their own
+      # overlay without forking this flake. See README § "Overriding the package".
       overlays.default = _final: prev: {
-        # openlinkhub = prev.openlinkhub.overrideAttrs (old: { ... });
         inherit (prev) openlinkhub;
       };
 
@@ -52,10 +51,15 @@
         deadnix = pkgs.runCommand "check-deadnix" { buildInputs = [ pkgs.deadnix ]; } ''
           deadnix --fail ${nixSrc} && touch $out
         '';
+        # nixfmt-tree is a wrapper around treefmt that pre-bakes nixfmt as the
+        # formatter and injects its own treefmt.toml; --ci enables --no-cache and
+        # --fail-on-change, which is the correct check mode.
         nixfmt = pkgs.runCommand "check-nixfmt" { buildInputs = [ pkgs.nixfmt-tree ]; } ''
-          nixfmt --check ${nixSrc}/*.nix && touch $out
+          treefmt --ci --tree-root ${nixSrc} && touch $out
         '';
 
+        # Evaluates the module options without real hardware or hardware-configuration.nix;
+        # assertions are forced via builtins.seq to catch option-type mismatches early.
         module-eval =
           let
             eval = nixpkgs.lib.nixosSystem {
