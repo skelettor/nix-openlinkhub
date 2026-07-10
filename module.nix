@@ -105,6 +105,6 @@ in
 
   meta = {
     maintainers = [ ];
-    doc = ./openlinkhub.md;
+    #doc = ./openlinkhub.md;
   };
 }
