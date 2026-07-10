@@ -20,33 +20,7 @@ let
 in
 {
   options.services.hardware.openlinkhub = {
-    enable = lib.mkEnableOption ''
-      OpenLinkHub, an open-source controller daemon for Corsair iCUE LINK
-      hubs, AIOs and other supported HID/USB peripherals.
-
-      The daemon exposes a local web UI on `http://127.0.0.1:27003` by
-      default. Both `listenAddress` and `listenPort` are configurable in
-      `/var/lib/openlinkhub/config.json` via the web UI; if you expose the
-      UI on a non-loopback address, open the corresponding port in
-      `networking.firewall.allowedTCPPorts` yourself.
-
-      All runtime configuration is owned by the daemon and persisted in
-      `/var/lib/openlinkhub/config.json`, which is rewritten whenever
-      settings change in the web UI. No declarative configuration options
-      are provided; edit settings through the UI or by stopping the service
-      and editing the JSON file directly.
-
-      Device presets, LCD images and language files are seeded from the
-      package into `/var/lib/openlinkhub/database/` on first start and are
-      preserved across rebuilds.
-
-      SCUF gamepad emulation requires the `uinput` kernel module, which is
-      normally autoloaded on access via the shipped udev rule. If not, set
-      `boot.kernelModules = [ "uinput" ]`.
-
-      Users who need direct device access outside the daemon (e.g. for
-      debugging) can be added to the `openlinkhub` group
-    '';
+    enable = lib.mkEnableOption "OpenLinkHub, a controller daemon for Corsair iCUE LINK devices, AIOs and hubs";
 
     package = lib.mkPackageOption pkgs "openlinkhub" { };
   };
@@ -62,15 +36,10 @@ in
     services.udev.packages = [ udevRulesPkg ];
 
     systemd.services.openlinkhub = {
-      description = "OpenLinkHub — Corsair iCUE LINK / AIO / Hub controller";
+      description = "OpenLinkHub - Corsair iCUE LINK / AIO / Hub controller";
       wantedBy = [ "multi-user.target" ];
-      # systemd-udev-settle ensures udev has finished processing events before the
-      # daemon starts. Restart=always handles the residual race on first boot.
-      after = [
-        "network.target"
-        "systemd-udev-settle.service"
-      ];
-      wants = [ "systemd-udev-settle.service" ];
+      after = [ "network.target" ];
+      wants = [ "dev-usb.device" ];
 
       preStart = ''
         # web/ and static/ live in the read-only store; symlink them into the
@@ -93,6 +62,9 @@ in
         User = "openlinkhub";
         Group = "openlinkhub";
         SupplementaryGroups = [ "input" ];
+        # Restart=always handles the residual race between udev rule application
+        # and first device open: if the daemon starts before GROUP="openlinkhub"
+        # is applied to a device node, it fails and retries after RestartSec.
         Restart = "always";
         RestartSec = "5s";
 
@@ -131,5 +103,8 @@ in
     };
   };
 
-  meta.maintainers = [ ];
+  meta = {
+    maintainers = [ ];
+    doc = ./openlinkhub.md;
+  };
 }
